@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>ToniaSoundGate</RootNamespace>
+    <AssemblyName>Tonia-SoundGate</AssemblyName>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- 安装包与文件属性用的元信息 -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Product>Tonia-SoundGate</Product>
+    <AssemblyTitle>Tonia-SoundGate</AssemblyTitle>
+    <Company>Tonia</Company>
+    <Description>外放拦截式静音守护工具：未授权外放时自动静音并询问，授权到期自动恢复静音。</Description>
+    <Copyright>Copyright © 2026 Tonia</Copyright>
+    <Version>1.0.1</Version>
+    <FileVersion>1.0.1.0</FileVersion>
+    <AssemblyVersion>1.0.1.0</AssemblyVersion>
+    <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+
+</Project>
