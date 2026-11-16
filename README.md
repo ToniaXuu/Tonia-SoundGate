@@ -36,6 +36,8 @@
 packaging\dist\Tonia-SoundGate-Setup-1.0.1.exe     # 约 58 MB
 ```
 
+> `packaging\dist` 与 `packaging\publish` 都在 `.gitignore` 里，不进版本库（单文件 60 MB 以上），需要按下方「重新打包」在本地生成。
+
 安装包特性：
 
 - **自包含发布**：内置 .NET 8 桌面运行时，目标机器**无需预装 .NET**，双击安装即可用
