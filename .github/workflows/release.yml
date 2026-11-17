@@ -1,0 +1,79 @@
+name: Release
+
+# 推送 v* 标签时自动构建并发布正式版。
+# 版本号唯一真源仍是 csproj 的 <Version>，tag 只是一致性校验的闸门。
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: 校验 tag 与 csproj 版本一致
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          [xml]$proj = Get-Content -LiteralPath 'Tonia-SoundGate.csproj' -Encoding UTF8
+          $node = $proj.Project.PropertyGroup | Where-Object { $_.Version } | Select-Object -First 1
+          if ($null -eq $node -or [string]::IsNullOrWhiteSpace($node.Version)) {
+            throw "csproj 缺少 <Version>，无法发版。"
+          }
+          $csprojVersion = $node.Version.Trim()
+          $tagVersion = $env:TAG_NAME.TrimStart('v', 'V')
+
+          if ($tagVersion -notmatch '^\d+\.\d+\.\d+$') {
+            throw "tag 版本格式异常：$tagVersion（应为三段数字版本号）。"
+          }
+          if ($csprojVersion -ne $tagVersion) {
+            throw "版本不一致：tag 为 $tagVersion，csproj 为 $csprojVersion。请先同步 csproj 的 <Version> 再打 tag。"
+          }
+          Write-Host "版本校验通过：$csprojVersion"
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install NSIS 3
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+
+      - name: 构建安装包
+        shell: pwsh
+        run: ./packaging/build.ps1
+
+      - name: 创建 Release 并挂载安装包
+        uses: softprops/action-gh-release@v2
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Tonia-SoundGate ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          fail_on_unmatched_files: true
+          files: packaging/dist/*.exe
+          generate_release_notes: true
+          body: |
+            ## Tonia-SoundGate ${{ env.TAG_NAME }}
+
+            外放拦截式静音守护工具：未授权外放时自动静音并询问，授权到期自动恢复静音。
+
+            ### 安装
+            下载下方 `Tonia-SoundGate-Setup-${{ env.TAG_NAME }}.exe` 并运行。安装到 Program Files 会触发 UAC 授权。
+
+            ### 隐私承诺
+            程序完全在本机运行，**不联网、不收集任何数据**。仅当用户主动点击托盘「检查更新…」时，才会向 GitHub 请求一次版本信息；程序不会下载、不会静默安装。
+
+            ### 本次更新
+            首个正式版：WASAPI 静音守护、托盘授权计时、开机自启、检查更新、崩溃兜底。
