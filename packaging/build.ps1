@@ -55,6 +55,14 @@ if (-not $makensis) {
 }
 
 # ---------- 4. 编译安装包，注入版本 ----------
+# NSIS 的 OutFile 不会自动创建目标目录；CI 全新 checkout 里 dist 不存在，
+# 必须显式创建，否则 makensis 报 "Can't open output file" 后退出码 1。
+$distDir = Join-Path $PSScriptRoot 'dist'
+if (-not (Test-Path -LiteralPath $distDir)) {
+    New-Item -ItemType Directory -Path $distDir -Force | Out-Null
+    Write-Host "已创建输出目录: $distDir" -ForegroundColor DarkGray
+}
+
 Write-Host "正在编译安装包 (APP_VERSION=$version) ..." -ForegroundColor Cyan
 Push-Location $PSScriptRoot
 try {
