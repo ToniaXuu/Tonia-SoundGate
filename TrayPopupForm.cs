@@ -5,7 +5,7 @@ namespace ToniaSoundGate;
 /// <summary>Windows 11 设置风格的托盘弹出面板，替代系统自带 ContextMenuStrip。</summary>
 internal sealed class TrayPopupForm : RoundedFormBase
 {
-    private enum Glyph { Clock, Shield, Power, Exit }
+    private enum Glyph { Clock, Shield, Power, Update, Exit }
 
     private readonly Func<string> _statusProvider;
     private readonly Func<bool> _authorizedProvider;
@@ -13,6 +13,7 @@ internal sealed class TrayPopupForm : RoundedFormBase
     private readonly Action<int> _onGrant;
     private readonly Action _onGuard;
     private readonly Action<bool> _onAutoStart;
+    private readonly Action _onCheckUpdate;
     private readonly Action _onExit;
 
     private readonly PictureBox _stateDot;
@@ -28,6 +29,7 @@ internal sealed class TrayPopupForm : RoundedFormBase
         Action<int> onGrant,
         Action onGuard,
         Action<bool> onAutoStart,
+        Action onCheckUpdate,
         Action onExit)
     {
         _statusProvider = statusProvider;
@@ -36,6 +38,7 @@ internal sealed class TrayPopupForm : RoundedFormBase
         _onGrant = onGrant;
         _onGuard = onGuard;
         _onAutoStart = onAutoStart;
+        _onCheckUpdate = onCheckUpdate;
         _onExit = onExit;
 
         FormBorderStyle = FormBorderStyle.None;
@@ -43,7 +46,8 @@ internal sealed class TrayPopupForm : RoundedFormBase
         ShowInTaskbar = false;
         TopMost = true;
         BackColor = UiTheme.Surface;
-        ClientSize = new Size(360, 430);
+        // 430 → 490：新增一行 44px 的「检查更新」+ 一条 16px 分隔线
+        ClientSize = new Size(360, 490);
         KeyPreview = true;
 
         // ---------- 状态卡 ----------
@@ -111,6 +115,11 @@ internal sealed class TrayPopupForm : RoundedFormBase
                 RefreshStatus();
             }, showCheck: true);
         AddRow(_autoStartRow, ref y);
+        AddSeparator(ref y);
+        // 唯一会联网的操作，独立成组：只有点击才发起一次请求，程序平时绝不触网。
+        // 末尾「…」表示点击后还会有后续反馈（检查结果 / 提示框）。
+        AddRow(new MenuRow("检查更新…", Glyph.Update,
+            () => { Close(); _onCheckUpdate(); }), ref y);
         AddSeparator(ref y);
         AddRow(new MenuRow("退出", Glyph.Exit,
             () => { Close(); _onExit(); }), ref y);
@@ -221,6 +230,13 @@ internal sealed class TrayPopupForm : RoundedFormBase
                 g.DrawArc(pen, x + 3, y + 2, 10, 9, 135, 270);
                 g.DrawLine(pen, x + 8, y + 1, x + 8, y + 8);
                 break;
+            case Glyph.Update:
+                // 向下箭头落到托盘线：表示"取回新版本"，与其余线性图标同一笔宽
+                g.DrawLine(pen, x + 8, y + 1, x + 8, y + 10);
+                g.DrawLine(pen, x + 4, y + 7, x + 8, y + 11);
+                g.DrawLine(pen, x + 12, y + 7, x + 8, y + 11);
+                g.DrawLine(pen, x + 2, y + 14, x + 14, y + 14);
+                break;
             case Glyph.Exit:
                 g.DrawLine(pen, x + 9, y + 3, x + 3, y + 3);
                 g.DrawLine(pen, x + 3, y + 3, x + 3, y + 13);
@@ -320,6 +336,7 @@ internal sealed class TrayPopupForm : RoundedFormBase
         protected override void OnClick(EventArgs e)
         {
             base.OnClick(e);
+            DebugLog.Write($"MENU click: [{Text}]");
             _onClick();
         }
     }

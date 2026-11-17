@@ -22,6 +22,10 @@ internal static class Program
         }
 
         ApplicationConfiguration.Initialize();
+        // 必须在创建任何窗口之前安装：否则默认的异常对话框会取代我们的处置，
+        // 用户随手一点"退出"，守护就静默消失了。
+        CrashGuard.Install();
+
         Application.Run(new TrayAppContext(activateEvent));
     }
 }

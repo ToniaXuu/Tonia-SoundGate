@@ -1,3 +1,4 @@
+using System.Reflection;
 using Microsoft.Win32;
 
 namespace ToniaSoundGate;
@@ -24,7 +25,10 @@ internal sealed class TrayAppContext : ApplicationContext
     private volatile bool _exiting;
 
     private TrayPopupForm? _popup;
-    private string _statusText = "守护中（已静音）";
+    // tooltip 缓存：只为避免每 tick 都往 shell 写同一串文字（NotifyIcon.Text 的 setter 会 P/Invoke）。
+    // 它不是"状态源"，真实状态一律由 ComputeStatusText() 现算。
+    private string _tooltipCache = "";
+    private int _tooltipCounter;
 
     public TrayAppContext(EventWaitHandle? activateEvent = null)
     {
@@ -127,12 +131,15 @@ internal sealed class TrayAppContext : ApplicationContext
 
         _popup?.Dispose();
         _popup = new TrayPopupForm(
-            () => _statusText,
+            // 必须传方法组而非缓存字符串：面板每秒刷新一次，
+            // 若给的是快照，倒计时会永远停在打开面板那一刻。
+            ComputeStatusText,
             () => _machine.IsAuthorized,
             () => _settings.StartWithWindows,
             RequestGrant,
             GuardNow,
             SetAutoStart,
+            CheckForUpdates,
             Exit);
         _popup.ShowAt(Cursor.Position);
     }
@@ -154,6 +161,14 @@ internal sealed class TrayAppContext : ApplicationContext
         }
         // 每个 tick 都快速复核静音状态，这是实际的第一道防线
         _machine.Tick();
+
+        // 每 5 个 tick（约 1 秒）同步一次托盘 tooltip 的剩余时间，与面板保持一致；
+        // 文案没变化就不写，避免每秒一次无谓的 shell 调用。
+        if (++_tooltipCounter >= 5)
+        {
+            _tooltipCounter = 0;
+            SyncTooltip();
+        }
     }
 
     private void ShowPrompt()
@@ -226,12 +241,87 @@ internal sealed class TrayAppContext : ApplicationContext
         _machine.ForceGuard();
     }
 
+    /// <summary>
+    /// 检查更新：这是全程序唯一会发起网络请求的入口，且必须用户主动点击菜单才会触发。
+    /// 启动、巡检、托盘刷新等任何其它路径都不触网，兑现"完全在本机运行"的承诺。
+    /// 请求放线程池执行，结果切回 UI 线程再弹窗；期间用户退出则静默丢弃结果。
+    /// </summary>
+    private void CheckForUpdates()
+    {
+        ToastService.Show("正在检查更新", "仅此次主动检查会联网 · 最多等待 8 秒", ToastKind.Info, 2200);
+
+        _ = Task.Run(async () =>
+        {
+            var result = await UpdateChecker.CheckAsync();
+            if (_exiting || _uiAnchor.IsDisposed) return;
+            try
+            {
+                _uiAnchor.BeginInvoke(new Action(() => ShowUpdateResult(result)));
+            }
+            catch
+            {
+                // 退出过程中 UI 锚点已销毁，忽略
+            }
+        });
+    }
+
+    private void ShowUpdateResult(UpdateCheckResult result)
+    {
+        if (!result.Success)
+        {
+            ToastService.Show("检查更新失败", result.Error ?? "请稍后重试", ToastKind.Warning, 4000);
+            return;
+        }
+
+        if (!result.HasUpdate)
+        {
+            ToastService.Show("已是最新版本", $"当前 v{result.LatestVersion}", ToastKind.Success, 2800);
+            return;
+        }
+
+        // 发现新版本：弹中性提示框，默认「稍后再说」，只有用户明确点击才打开浏览器
+        using var notice = new UpdateNoticeForm(
+            Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0",
+            result.LatestVersion ?? "",
+            result.ReleaseUrl ?? "https://github.com/ToniaXuu/Tonia-SoundGate/releases");
+        notice.ShowDialog();
+    }
+
     /// <summary>把分钟数转成用户可读的时长文案。</summary>
     private static string FormatDuration(int minutes)
     {
         if (minutes >= 1440 && minutes % 1440 == 0) return $"{minutes / 1440} 天";
         if (minutes >= 60 && minutes % 60 == 0) return $"{minutes / 60} 小时";
         return $"{minutes} 分钟";
+    }
+
+    /// <summary>
+    /// 现算状态文案。**不要改回缓存字段**：托盘面板每秒刷新、tooltip 也需随时间变化。
+    /// 曾用 _statusText 缓存快照（只在 StateChanged 时写入），结果授权期间状态不再变化、
+    /// 快照不再更新，面板倒计时就僵在授权那一刻（表现为"剩余 29 分 59 秒"永远不动）。
+    /// </summary>
+    private string ComputeStatusText()
+    {
+        if (_machine.IsAuthorized && _machine.AuthorizedUntil is { } until)
+        {
+            var remain = until - DateTime.Now;
+            if (remain < TimeSpan.Zero) remain = TimeSpan.Zero;
+            return $"授权中 · 剩余 {FormatRemain(remain)}";
+        }
+        return "守护中（已静音）";
+    }
+
+    /// <summary>把当前状态写进托盘 tooltip。状态切换时立即写，其余时间由巡检每秒同步。</summary>
+    private void SyncTooltip()
+    {
+        if (_tray is null) return;
+        var text = $"Tonia-SoundGate · {ComputeStatusText()}";
+        // NotifyIcon.Text 上限 63 字符，超长会抛异常；本方法跑在巡检回调里，
+        // 抛出去没人接就会终止程序，所以宁可丢掉应用名前缀也不冒险。
+        if (text.Length > 63) text = ComputeStatusText();
+        if (text == _tooltipCache) return; // 文案没变就不碰 shell
+        _tooltipCache = text;
+        _tray.Text = text;
     }
 
     private void RefreshTray()
@@ -243,25 +333,21 @@ internal sealed class TrayAppContext : ApplicationContext
             return;
         }
 
-        var authorized = _machine.IsAuthorized;
-        _tray.Icon = authorized ? TrayIcons.Allowed : TrayIcons.Guard;
-
-        if (authorized && _machine.AuthorizedUntil is { } until)
-        {
-            _statusText = $"授权中 · 剩余 {FormatRemain(until - DateTime.Now)}";
-        }
-        else
-        {
-            _statusText = "守护中（已静音）";
-        }
-        _tray.Text = $"Tonia-SoundGate · {_statusText}";
+        _tray.Icon = _machine.IsAuthorized ? TrayIcons.Allowed : TrayIcons.Guard;
+        SyncTooltip();
     }
 
+    /// <summary>
+    /// 剩余时长文案。秒数**向上取整**：刚授权时显示"30 分 0 秒"而不是"29 分 59 秒"，
+    /// 且最后一秒内仍显示"1 秒"，真正归零才显示"0 秒"，避免一进来就少一秒的观感。
+    /// </summary>
     private static string FormatRemain(TimeSpan t)
     {
-        if (t.TotalHours >= 1) return $"{(int)t.TotalHours} 小时 {t.Minutes} 分";
-        if (t.TotalMinutes >= 1) return $"{(int)t.TotalMinutes} 分 {t.Seconds} 秒";
-        return $"{Math.Max(0, t.Seconds)} 秒";
+        if (t < TimeSpan.Zero) t = TimeSpan.Zero;
+        long total = (long)Math.Ceiling(t.TotalSeconds);
+        if (total >= 3600) return $"{total / 3600} 小时 {total % 3600 / 60} 分";
+        if (total >= 60) return $"{total / 60} 分 {total % 60} 秒";
+        return $"{total} 秒";
     }
 
     private void SetAutoStart(bool enabled)
@@ -300,6 +386,9 @@ internal sealed class TrayAppContext : ApplicationContext
 
     private void Exit()
     {
+        // 记进 crash.log：这样"程序没了"时能一眼分清是用户自己点的退出，
+        // 还是异常/外部因素导致的消失。
+        CrashGuard.Write("退出：用户从托盘菜单选择「退出」，主动结束守护");
         _exiting = true;
         _watchdog.Stop();
         _popup?.Dispose();

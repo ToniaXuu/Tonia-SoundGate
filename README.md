@@ -25,8 +25,9 @@
   - 拦截弹窗的默认按钮同样是「保持静音」，键盘误敲不会外放
 - **Windows 11 设置风格界面**：弹窗与托盘面板均为浅色圆角卡片，统一配色与图标；弹窗分区布局、留白充足，长设备名自动省略，杜绝文字拥挤裁切
 - **自绘托盘面板**：替代系统自带菜单，含状态实时倒计时、逐项图标、hover 高亮；点击外部或 Esc 关闭
-- 托盘面板：授权外放 30 分钟/1 小时/1 天、立即恢复守护、开机自启（带勾选）、退出
+- 托盘面板：授权外放 30 分钟/1 小时/1 天、立即恢复守护、开机自启（带勾选）、**检查更新**、退出
 - 记住上次授权时长；单实例保护；配置存于 `%AppData%\Tonia-SoundGate\settings.json`
+- **零联网承诺**：程序启动、巡检、托盘刷新等所有常规路径都不触网。唯一的联网入口是托盘面板的「检查更新」，必须你主动点击才会发起一次请求；发现新版本也只弹提示，**绝不自动下载、静默安装或改动任何文件**。
 
 ## 安装包（推荐给最终用户）
 
@@ -79,6 +80,7 @@ dotnet build -c Release
 - NAudio 2.2.1（`AudioEndpointVolume.Mute` + `OnVolumeNotification` 事件，WASAPI 底层）
 - UI 全程序化绘制：托盘图标、圆角卡片、圆角按钮、面板图标均无外部图片/CDN 依赖
 - DWM 窗口圆角（Win11 原生，Win10 回退到 Region 圆角）+ 窗口阴影
+- 更新检查：`UpdateChecker.cs`（GitHub Releases API，8s 超时静默降级）+ `UpdateNoticeForm.cs`（中性提示，默认安全侧）；完整方案见 `UPDATE-STRATEGY.md`
 
 ## 代码结构
 
@@ -95,8 +97,11 @@ dotnet build -c Release
 | `NumberInput.cs` | 自绘数字输入框，替代高 DPI 下必然裁切的 `NumericUpDown` |
 | `ToastForm.cs` | 右下角 Toast 通知（淡入淡出、不抢焦点、新通知替换旧的） |
 | `TrayIcons.cs` | 程序化绘制两种状态图标 |
+| `CrashGuard.cs` | 崩溃兜底：异常与进程退出统一落盘 `crash.log`，UI 异常不终止守护 |
 | `AppSettings.cs` | 配置持久化 |
 | `Program.cs` | 入口 + 单实例保护 |
+| `UpdateChecker.cs` | 更新检测（唯一联网点，仅主动点击触发；`System.Version` 三段比对） |
+| `UpdateNoticeForm.cs` | 发现新版本的中性提示框，默认「稍后再说」，不自动下载 |
 
 ## 实测验证（2026-11-16）
 
@@ -121,6 +126,29 @@ dotnet build -c Release
 - **托盘面板**：用自绘无边框窗体替换系统 `ContextMenuStrip`，圆角卡片 + 状态实时倒计时 + 逐项图标 + hover 高亮。修掉了自绘菜单项用 `Color.Transparent` 导致的**"控件不支持透明的背景色"崩溃**（普通 Control 子类不支持透明背景，改用与父容器一致的纯色）。
 
 排障用的诊断日志保留在 `DebugLog.cs`，默认关闭（`Enabled = false`）；排查时改为 `true` 重新编译，日志写到程序目录 `soundgate.log`。
+
+### 崩溃兜底：守护程序绝不能静默消失
+
+对一个"静音守护"程序来说，**进程悄悄消失是最严重的故障**——用户以为还在守护，实际已无任何拦截，一开外放就直接泄露。而这类故障之所以难查，是因为程序消失前什么都没留下。
+
+`CrashGuard.cs` 解决这个问题，通过 `Application.SetUnhandledExceptionMode(CatchException)` + `ThreadException` + `AppDomain.UnhandledException` + `ProcessExit` 四个钩子，把**每一次异常和每一次进程退出**都写进：
+
+```
+%APPDATA%\Tonia-SoundGate\crash.log     （带 BOM 的 UTF-8，记事本直接可读）
+```
+
+行为约定：
+
+| 情形 | 处理 |
+|---|---|
+| UI 线程异常 | **记录完整堆栈，进程继续存活**，右下角提示"操作未完成 · 静音守护仍在运行" |
+| 后台线程致命异常 | 记录堆栈（.NET 下无法拦截终止，但现场留存） |
+| 用户点「退出」 | 记录"用户主动结束守护"，与异常退出可区分 |
+| 任何原因的进程退出 | 记录退出码与时间戳 |
+
+之所以要接管异常对话框：WinForms 默认会弹出 .NET 的未处理异常对话框，用户随手一点"退出"，守护就没了——而且**不产生任何 Windows 事件日志或 WER 报告**，事后完全无法判断是崩溃还是被关掉。
+
+日志超过 256 KB 时自动只保留最近 400 行，长期运行不会无限增长。
 
 ### 交互反馈优化（同日续二）
 
@@ -150,6 +178,29 @@ dotnet build -c Release
 5. 拦截弹窗的「允许外放」同样延迟 700ms 启用，避免"连点穿透"。
 
 本轮无裁切问题：确认框按两行正文排版（文案内显式换行 + 容器高度 64），在 175% DPI 下用 1:1 导出图核验标题、红字警告、两行正文、倒计时提示、双按钮均完整；同时核验了按钮禁用态（灰底灰字）与启用态（强调蓝）的视觉区分。
+
+### 托盘倒计时冻结修复（同日续四）
+
+用户反馈：托盘面板里的「授权中 · 剩余 29 分 59 秒」永远不动。
+
+根因是**数据源给了快照，而不是定时器没跑**：
+
+```csharp
+// 错误：面板每秒刷新一次，但每次都读到同一个陈旧字符串
+_statusText = $"授权中 · 剩余 {FormatRemain(until - DateTime.Now)}";  // 只在 StateChanged 时写入
+_popup = new TrayPopupForm(() => _statusText, ...);
+```
+
+`_statusText` 只在 `RefreshTray()` 里赋值，而 `RefreshTray()` 仅由 `StateChanged` 事件触发——也就是状态**切换**那一刻。授权期间状态不再变化（`Tick()` 每 200ms 跑但只在到期时才发事件），于是字符串冻结在授权瞬间算出的 `29 分 59 秒`。面板的 1 秒 `Timer` 一直正常，只是每秒读到的都是同一份缓存。
+
+修复：
+
+- 删除 `_statusText` 字段，改为 `ComputeStatusText()` **方法组**传入面板，每次刷新现算；
+- 剩余秒数改为**向上取整**，刚授权显示 `30 分 0 秒` 而不是 `29 分 59 秒`，归零才显示 `0 秒`；
+- 托盘 tooltip 由巡检每 5 个 tick（约 1 秒）同步一次，文案未变则不写（`NotifyIcon.Text` 的 setter 会 P/Invoke 到 shell）；
+- tooltip 加 63 字符保护：`NotifyIcon.Text` 超限会抛异常，而这行跑在巡检回调里，必须兜住。
+
+实测（临时入口记录 provider 调用）：`17:15:30.732 → 30 分 0 秒`、`17:15:31.767 → 29 分 59 秒`、`17:15:32.772 → 29 分 58 秒`，间隔 1 秒稳定递进。
 
 ## 已知边界
 
