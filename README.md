@@ -50,16 +50,17 @@ packaging\dist\Tonia-SoundGate-Setup-1.0.1.exe     # 约 58 MB
 
 ### 重新打包
 
-```bash
-# 1) 自包含单文件发布（输出到 packaging\publish，该目录不进版本库）
-dotnet publish -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true \
-  -p:IncludeNativeLibrariesForSelfExtract=true -p:DebugType=none \
-  -o packaging\publish
+**发版只需改一个数字**：`Tonia-SoundGate.csproj` 里的 `<Version>`。然后一条命令完成发布 + 打包：
 
-# 2) 用 NSIS 3 编译安装脚本（makensis 以脚本目录为工作目录，故需 cd 进去）
-cd packaging && makensis /INPUTCHARSET UTF8 setup.nsi
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
+
+脚本会自动：读取 csproj 版本 → 自包含单文件发布到 `packaging\publish`（不进版本库）→ 把版本注入 NSIS → 编译出 `packaging\dist\Tonia-SoundGate-Setup-<版本>.exe`（不进版本库）。
+
+**版本单一真源**：`<Version>` 是唯一需要手改的地方。`AssemblyVersion` / `FileVersion` 由 .NET SDK 自动派生为四段；安装包文件名、注册表版本、安装包文件属性则由脚本把同一版本注入 NSIS。这样绝不会出现"程序内部是 1.0.2、安装包却叫 1.0.1"的漂移。
+
+> 若确实要手动编译 NSIS（不推荐），可直接 `makensis /INPUTCHARSET UTF8 setup.nsi`，但 `APP_VERSION` 会退回脚本内的兜底值，需自行保证与 csproj 一致。
 
 图标源文件为 `packaging\app.ico`（多尺寸 16~256px，程序化绘制，无外部素材依赖），项目根目录的 `app.ico` 已通过 `ApplicationIcon` 嵌入 exe。
 

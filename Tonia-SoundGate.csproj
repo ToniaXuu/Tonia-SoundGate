@@ -16,9 +16,9 @@
     <Company>Tonia</Company>
     <Description>外放拦截式静音守护工具：未授权外放时自动静音并询问，授权到期自动恢复静音。</Description>
     <Copyright>Copyright © 2026 Tonia</Copyright>
+    <!-- 版本单一真源：SDK 会自动由 Version 派生 FileVersion(1.0.1.0) 与 AssemblyVersion，
+         打包脚本也读取此处注入 NSIS。发版只需改这一个数字。 -->
     <Version>1.0.1</Version>
-    <FileVersion>1.0.1.0</FileVersion>
-    <AssemblyVersion>1.0.1.0</AssemblyVersion>
     <SatelliteResourceLanguages>zh-Hans</SatelliteResourceLanguages>
   </PropertyGroup>
 

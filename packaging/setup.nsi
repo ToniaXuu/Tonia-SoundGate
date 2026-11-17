@@ -1,5 +1,6 @@
 ; Tonia-SoundGate 安装脚本（NSIS 3 / MUI2）
-; 编译：makensis /INPUTCHARSET UTF8 setup.nsi
+; 编译：请用 packaging\build.ps1（它从 csproj 读取版本并注入 /DAPP_VERSION）。
+;       直接 makensis 也能编译，但会用下方 APP_VERSION 兜底值，可能与程序版本不一致。
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -11,7 +12,11 @@ SetCompressorDictSize 64
 
 ; ---------------- 基本信息 ----------------
 !define APP_NAME       "Tonia-SoundGate"
-!define APP_VERSION    "1.0.1"
+; 版本唯一真源在 Tonia-SoundGate.csproj 的 <Version>。build.ps1 读取后以 /DAPP_VERSION 注入。
+; 此处兜底值仅供"手动直接编译"时使用，正常发版一律走脚本，不再手工改这个数字。
+!ifndef APP_VERSION
+  !define APP_VERSION "1.0.1"
+!endif
 !define APP_PUBLISHER  "Tonia"
 !define APP_EXE        "Tonia-SoundGate.exe"
 !define APP_KEY        "Software\Tonia-SoundGate"
@@ -27,7 +32,8 @@ RequestExecutionLevel admin
 ShowInstDetails show
 ShowUninstDetails show
 
-VIProductVersion "1.0.1.0"
+; VIProductVersion 必须是四段 x.x.x.x，而 APP_VERSION 是三段；追加 .0 派生，不再独立硬编码。
+VIProductVersion "${APP_VERSION}.0"
 VIAddVersionKey /LANG=2052 "ProductName"     "${APP_NAME}"
 VIAddVersionKey /LANG=2052 "FileDescription" "${APP_NAME} 安装程序"
 VIAddVersionKey /LANG=2052 "FileVersion"     "${APP_VERSION}"
